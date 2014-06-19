@@ -1,0 +1,235 @@
+---
+title: "Practical Machine Learning - Measuring Proper Form During Execise"
+author: "c-spohrer"
+date: "06/18/2014"
+output: html_document
+---
+
+**SYNOPSIS**
+
+We apply random forests as a machine learning tool to measurements of arm motion while a subject performs bicep curls to classify whether they have performed the exercise correctly.
+
+**DATA SET**
+
+ The data set consists of measurements from 6 participants as to how well they performed dumbell exercises. The acceleromters that recorded the measurements were attached to variuous parts of their arms.   The particpants performed the Bicep Curl in 1 correct method and in 4 specific incorrect methods, resulting in 5 classes that will be predicted from the measurements.
+
+The correct class is Class A, the incorrect, but distinct classes are B, C, D and E.
+
+There are 159 independent variables, of which nearly 100 variables are descriptive statistics of the other fields, and so will be eliminated from the model.
+
+**APPROACH**
+
+We will use the caret pacakge and the R statistical language to perform our analysis and to model our predictions.  The data is provided as one file for training, and a smaller file of 20 records for validation and submission for grading purposes.
+
+For our purposes, we split the training file into a training set of 70% of the records, and a testing set with the remaining 30% of the observations, leaving the 20 records in the seperate testing file as our validation set.
+
+
+**PRE-PROCESSING**
+
+
+The classification variable is 'classe' and consists of the values: A, B, C, D, E; with A = correct performance of the exercise, and the others correspond to intentionally performing the exercise wrong.
+
+
+The first 7 independent variables are descriptive of the observation, and so will be eliminated. They are: 
+* raw_timestamp_part_1
+* raw_timestamp_part_2
+* cvtd_timestamp
+* new_window 
+* num_window
+
+As mentioned above, many variables are descriptive statistics of the raw measurements, and so they will be eliminated as well. These variablers start with names such as: 
+* kurtosis
+* skewness
+* max
+* min
+* var
+* avg
+* stddev
+* total
+
+Eliminating these variables also had the added benefit of eliminated any problems with missing values.
+
+
+
+**EXPERIMENT**
+
+
+The following analysis, code and results hightlight the steps taken to apply the random forest machine learning technique to the data set. The data is prepared, split into training and testing sets, the algorithm applied, classification results reported, and the model applied to a held-out set of twenty observations.
+
+```{r}
+# analysis 
+# setwd("~/Documents/online-learning/data-science-practical-machine-learning-2014/code")
+
+# read in the data sets
+testing <- read.csv("pml-testing.csv")
+training <- read.csv("pml-training.csv", na.strings=c("","NA"))
+
+dim(training)
+dim(testing)
+
+# take a closer look at the data
+# str(training)
+# require(Hmisc)
+# describe(training)
+
+
+
+
+# let's try getting rid of the summary statistics columns first
+# determine which columns have a lot of NA's'
+ 
+ idx<-apply(training, 2, function(x) sum(is.na(x)))
+
+# describe(idx)
+
+# RESULTS: this shows that there were 60 columns that had values for every observation,
+# and 100 columns with 19216 NA's in that column
+# so create a column index of which columns to keep
+
+keepthesecolumns <- ifelse(idx == 0, TRUE, FALSE)
+
+# new training set without the columns of summary statistics
+
+training2 <- training[,keepthesecolumns]
+testing2 <- testing[, keepthesecolumns]
+dim(training2)
+dim(testing2)
+#str(training2)
+#str(testing2)
+
+# now get rid of the first 7 fields - since these were descriptive as well
+training3 <- training2[,8:ncol(training2)]
+testing3 <- testing2[,8:ncol(testing2)]
+dim(training3)
+dim(testing3)
+
+# now turn the class variable 'classe' into a factor
+training3$classe <- factor(as.character( training3$classe) )
+
+# since randomforest takes a long time,
+# let's train against smaller subsets for testing purposes
+
+TEST =  FALSE # TRUE # FALSE
+if(TEST) {
+index <- sample(nrow(training),size=500, replace= FALSE )
+training3 <- training3[ index, ]
+dim(training3)
+}
+
+
+# Split into a training set, and a testing set, 
+# and save the 20 obs as a validation set
+
+ 
+library(caret)
+
+# create trainSet, testSet, validationSet
+inTrain <- createDataPartition( y=training3$classe, p=0.7,  list=FALSE)
+trainSet <- training3[inTrain, ]
+testSet <- training3[-inTrain, ]
+validationSet <- testing3
+
+dim(trainSet)
+dim(testSet)
+dim(validationSet)
+
+
+set.seed(12345)
+
+# use out-of-bag sampling instead of cross-validation to find the
+# best choice of paramters, ie. mtry
+ctrl <- trainControl(method="oob", number=5)
+modelFit <- train(classe~., data=trainSet, method="rf", 
+                  trControl=ctrl, ntree=500, tuneLength=5, metric="Accuracy")
+
+modelFit
+
+
+
+pred <- predict(modelFit, trainSet)
+print("Model accuracy based on training set")
+table(pred, trainSet$classe)
+
+pred <- predict(modelFit, testSet)
+print("Model accuracy based on held out testing set")
+table(pred, testSet$classe)
+
+
+# confusion matrix
+
+cm <- confusionMatrix(data= pred,  # predicted results
+                reference= testSet$classe  )    # true results
+cm
+myAccuracy <- cm$overall["Accuracy"] * 100
+myAccuracy <- as.character(round(myAccuracy, 2))
+
+
+# look at variable importance
+
+# Report on the variables with the most importance
+varImp(modelFit)
+varlist <- varImp(modelFit)
+
+# plot those variables with the  most importance
+vli <- varlist$importance[ order(varlist$importance$Overall, decreasing=TRUE), ,drop=FALSE]
+numShown <- 10
+myBars <- as.matrix(vli[1:numShown,])
+myNames <- rownames(vli)[1:numShown]
+
+op <- par(no.readonly = TRUE) # the whole list of settable par's.
+par(mai=c(1,2,1,1)+0.1 ) # expand left margin)
+
+barplot(myBars,
+        horiz=TRUE,
+        beside = TRUE, 
+        names.arg = myNames,
+        cex.names=0.7,
+        las=1,  # asix labels always horizontal
+        xlab="Relative Importance",
+        main=paste0("Top ", as.character(numShown), " Variables ranked by Importance"))
+
+par(op)
+
+testpred <- predict(modelFit, testing3)
+print("Predictions made on validation set")
+testpred
+
+
+# write out the files for submission
+
+answers <- as.character(testpred)
+
+# submission
+
+# answers = rep("A", 20) ie as a character vector
+
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+# this will write out twenty separate files, one for each answer
+# into your working directory
+
+pml_write_files(answers)
+
+
+```
+
+
+**CONCLUSION**
+
+We have shown that the random forest algorithm can be applied to this data with excellent results. The classification accuracy is greater then `r myAccuracy`% for predicting all 5 classes, thus showing we can differentiate between a bicep curl performed correctly, or performed in 4 other incorrect variations.
+
+
+**REFERENCE:**
+
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz350q5jpWJ
+
+
